@@ -39,14 +39,14 @@ try:
 except ImportError:
     HAS_YOLO = False
 
-ROOT = Path("/home/luoyh/deep_learning_project")
+ROOT = Path("/yourpath")
 DATASET = ROOT / "Dataset"
 TEST_DIR = DATASET / "test"
 INIT_DIR = TEST_DIR / "initialize"
 OUT_DIR = ROOT / "data" / "Comparative experiment" / "Fusion_strict"
 VIS_DIR = DATASET / "Model_others" / "Visual_final"
 YOLO_W = DATASET / "models" / "best.pt"
-VIS_W = DATASET / "models" / "Visual" / "True-Use" / "mvtf_best.pth"
+VIS_W = DATASET / "models" / "Visual" / "True-Use" / "mvtf_best.pth" # MVTF is the former name of CAST-Net
 
 EMG_MODEL_DIR = DATASET / "models" / "EMG"
 EMG_SC = EMG_MODEL_DIR / "emg_scaler.pkl"
