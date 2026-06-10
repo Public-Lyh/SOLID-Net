@@ -105,13 +105,8 @@ checkpoints/
 
 如果你觉得本项目有帮助，请引用：
 
-```bibtex
-@article{yourpaper2025solidnet,
-  title={SOLID-Net: Your Paper Title},
-  author={Your Name},
-  journal={Your Journal or Conference},
-  year={2025}
-}
+```
+
 ```
 
 # English Description
@@ -215,11 +210,5 @@ After configuring the dataset path and Python environment, you can start trainin
 
 If you find this project helpful, please cite:
 
-```bibtex
-@article{yourpaper2025solidnet,
-  title={SOLID-Net: Your Paper Title},
-  author={Your Name},
-  journal={Your Journal or Conference},
-  year={2025}
-}
+```
 ```
