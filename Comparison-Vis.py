@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import gc
 import json
 import re
@@ -786,4 +784,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
