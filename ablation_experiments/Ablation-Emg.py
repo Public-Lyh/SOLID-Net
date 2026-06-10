@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
 
-ROOT_PATH = Path("/home/luoyh/deep_learning_project/Dataset")
+ROOT_PATH = Path("/yourpath")
 EMG_MODEL_DIR = ROOT_PATH / "models" / "EMG"
 TEST_DIR = ROOT_PATH / "test"
 EMG_INIT_DIR = TEST_DIR / "initialize"
