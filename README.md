@@ -62,7 +62,7 @@ PyTorch 官网：
 
 由于自建的SeeEMG数据集较大，未直接上传至 GitHub。
 
-数据集下载地址将于论文被接收后开放
+数据集下载地址将于论文被接收后开放。
 
 下载后，请将数据集放置在：
 
@@ -83,16 +83,7 @@ data/
 
 由于模型文件较大，未直接上传至 GitHub。
 
-预训练模型下载地址：
-
-- 百度网盘：
-- 提取码：
-
-下载后，请将模型权重放置在：
-
-```text
-checkpoints/
-```
+预训练模型下载地址将于论文被接收后开放。
 
 ## 6. 模型训练
 
@@ -186,16 +177,7 @@ data/
 
 The pretrained model weights are not uploaded to GitHub due to their large size.
 
-Download links:
-
-- Baidu Netdisk: 
-- Extraction code:
-
-After downloading, please place the weights under:
-
-```text
-checkpoints/
-```
+Download links will be given soon.
 
 ## 6. Training
 
