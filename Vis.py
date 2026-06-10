@@ -35,10 +35,10 @@ warnings.filterwarnings('ignore')
 
 
 class Config:
-    DATA_DIR = Path('/home/luoyh/deep_learning_project/Dataset/origin_pic')
-    HAND_MODEL_PATH = Path('/home/luoyh/deep_learning_project/Dataset/models/best.pt')
-    SAVE_DIR = Path('/home/luoyh/deep_learning_project/Dataset/models/Visual/True-Use')
-    CROP_CACHE_DIR = Path('/home/luoyh/deep_learning_project/Dataset/cropped_hands_cache')
+    DATA_DIR = Path('/yourpath/Dataset/origin_pic')
+    HAND_MODEL_PATH = Path('/yourpath/Dataset/models/best.pt')
+    SAVE_DIR = Path('/yourpath/Dataset/models/Visual/True-Use')
+    CROP_CACHE_DIR = Path('/yourpath/Dataset/cropped_hands_cache')
 
     TRAIN_PERSONS = [1, 2, 3, 4]
     VAL_PERSONS = [5]
