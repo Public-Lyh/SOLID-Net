@@ -49,9 +49,10 @@ def set_seed(seed=42):
 
 set_seed(42)
 
-ROOT_PATH = Path("/home/luoyh/deep_learning_project/Dataset")
+ROOT_PATH = Path("/yourpath/Dataset")
 HAND_DETECT_MODEL = ROOT_PATH / "models" / "best.pt"
-VISUAL_MODEL_PATH = ROOT_PATH / "models" / "mvtf_visual.pth"
+VISUAL_MODEL_PATH = ROOT_PATH / "models" / "mvtf_visual.pth" # MVTF is the former name of CAST-Net
+
 EMG_MODEL_DIR = ROOT_PATH / "models" / "EMG"
 TEST_DIR = ROOT_PATH / "test"
 EMG_INIT_DIR = TEST_DIR / "initialize"
