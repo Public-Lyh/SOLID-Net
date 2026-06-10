@@ -34,12 +34,12 @@ except ImportError:
 
 class Config:
     DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
-    DATA_DIR = Path("/home/luoyh/deep_learning_project/Dataset/origin_pic")
-    TEST_DIR = Path("/home/luoyh/deep_learning_project/Dataset/test")
-    TRAINED_DIR = Path("/home/luoyh/deep_learning_project/Dataset/ablation_study")
-    OUTPUT_DIR = Path("/home/luoyh/deep_learning_project/data/Ablation experiment/EMG/VIS")
-    VISUAL_MODEL_PATH = Path("/home/luoyh/deep_learning_project/Dataset/Model_others/Visual/True-Use/mvtf_best.pth")
-    HAND_DETECT_PATH = Path("/home/luoyh/deep_learning_project/Dataset/models/best.pt")
+    DATA_DIR = Path("/yourpath/Dataset/origin_pic")
+    TEST_DIR = Path("/yourpath/Dataset/test")
+    TRAINED_DIR = Path("/yourpath/Dataset/ablation_study")
+    OUTPUT_DIR = Path("/yourpath/data/Ablation experiment/EMG/VIS")
+    VISUAL_MODEL_PATH = Path("/yourpath/Dataset/Model_others/Visual/True-Use/mvtf_best.pth")
+    HAND_DETECT_PATH = Path("/yourpath/Dataset/models/best.pt")
 
     VAL_PERSONS = [5]
     NUM_CLASSES = 13
