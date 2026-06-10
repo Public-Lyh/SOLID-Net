@@ -22,7 +22,7 @@ import json
 
 warnings.filterwarnings('ignore')
 
-ROOT_PATH = Path("/home/luoyh/deep_learning_project/Dataset")
+ROOT_PATH = Path("/yourpath/Dataset")
 TRAIN_EMG_SINGLE = ROOT_PATH / "origin_emg" / "Single gesture"
 TRAIN_EMG_CONTINUOUS = ROOT_PATH / "origin_emg" / "Continuous gesture"
 TEST_DIR = ROOT_PATH / "test"
