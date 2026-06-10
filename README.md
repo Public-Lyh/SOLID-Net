@@ -34,7 +34,6 @@ SOLID-Net/
 │   ├── Ablation-Emg.py
 │   ├── Ablation-Vis.py
 │   └── Ablation-Fusion.py
-├── requirements.txt
 └── README.md
 ```
 
@@ -101,7 +100,7 @@ data/
 
 ## 1. Introduction
 
-SOLID-Net is a deep learning model designed for XXX.
+SOLID-Net is a deep learning model for hand rehabilitation gesture recognition tasks.
 
 This repository contains:
 
@@ -127,7 +126,6 @@ SOLID-Net/
 │   ├── Ablation-Emg.py
 │   ├── Ablation-Vis.py
 │   └── Ablation-Fusion.py
-├── requirements.txt
 └── README.md
 ```
 
