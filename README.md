@@ -64,7 +64,7 @@ PyTorch 官网：
 
 数据集下载地址：
 
-- 百度网盘：你的链接
+- 百度网盘：
 - 提取码：xxxx
 
 下载后，请将数据集放置在：
@@ -88,9 +88,8 @@ data/
 
 预训练模型下载地址：
 
-- 百度网盘：你的链接
-- 提取码：xxxx
-- Google Drive：你的链接，可选
+- 百度网盘：
+- 提取码：
 
 下载后，请将模型权重放置在：
 
@@ -114,15 +113,6 @@ checkpoints/
   year={2025}
 }
 ```
-
-## 8. 联系方式
-
-如有问题，请联系：
-
-- GitHub Issues: https://github.com/Public-Lyh/SOLID-Net/issues
-- Email: luoyuhang963@gmail.com 、 2586160590@qq.com
-
----
 
 # English Description
 
@@ -184,7 +174,7 @@ The dataset is not uploaded to GitHub due to its large size.
 
 Dataset download link:
 
-- Baidu Netdisk: your link
+- Baidu Netdisk: 
 - Extraction code: xxxx
 
 After downloading, please place the dataset under:
@@ -208,9 +198,8 @@ The pretrained model weights are not uploaded to GitHub due to their large size.
 
 Download links:
 
-- Baidu Netdisk: your link
-- Extraction code: xxxx
-- Google Drive: your link, optional
+- Baidu Netdisk: 
+- Extraction code:
 
 After downloading, please place the weights under:
 
@@ -234,10 +223,3 @@ If you find this project helpful, please cite:
   year={2025}
 }
 ```
-
-## 11. Contact
-
-If you have any questions, please contact:
-
-- GitHub Issues: https://github.com/Public-Lyh/SOLID-Net/issues
-- Email: luoyuhang963@gmail.com 、 2586160590@qq.com
