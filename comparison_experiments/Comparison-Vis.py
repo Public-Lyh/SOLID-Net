@@ -39,7 +39,7 @@ TEST_DIR = DATASET_DIR / "test"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "Comparative experiment" / "Single Vis"
 CHECKPOINT_DIR = DATASET_DIR / "Model_others" / "Visual_final"
 
-PRETRAINED_WEIGHT_PATH = DATASET_DIR / "models" / "mvtf_visual.pth"
+PRETRAINED_WEIGHT_PATH = DATASET_DIR / "models" / "mvtf_visual.pth" # MVTF is the former name of CAST-Net
 YOLO_WEIGHT_PATH = DATASET_DIR / "models" / "best.pt"
 
 NUM_CLASSES = 13
