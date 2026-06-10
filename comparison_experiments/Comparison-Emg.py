@@ -14,7 +14,7 @@ import seaborn as sns
 
 warnings.filterwarnings('ignore')
 
-ROOT = Path("/home/luoyh/deep_learning_project")
+ROOT = Path("/yourpath")
 DATASET_ROOT = ROOT / "Dataset"
 OUR_EMG_SCALER = DATASET_ROOT / "models" / "emg_scaler.pkl"
 OUR_EMG_MODEL = DATASET_ROOT / "models" / "emg_ensemble.pkl"
