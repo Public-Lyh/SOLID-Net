@@ -62,10 +62,7 @@ PyTorch 官网：
 
 由于自建的SeeEMG数据集较大，未直接上传至 GitHub。
 
-数据集下载地址：
-
-- 百度网盘：
-- 提取码：xxxx
+数据集下载地址将于论文被接收后开放
 
 下载后，请将数据集放置在：
 
@@ -165,12 +162,10 @@ PyTorch official website:
 
 ## 4. Dataset
 
-The dataset is not uploaded to GitHub due to its large size.
+The dataset is too big to uploaded to GitHub due to its large size.
 
-Dataset download link:
+Dataset download link will be given soon.
 
-- Baidu Netdisk: 
-- Extraction code: xxxx
 
 After downloading, please place the dataset under:
 
