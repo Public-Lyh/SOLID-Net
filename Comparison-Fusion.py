@@ -39,7 +39,7 @@ try:
 except ImportError:
     HAS_YOLO = False
 
-ROOT = Path("/home/luoyh/deep_learning_project")
+ROOT = Path("/yourpath")
 DATASET = ROOT / "Dataset"
 TEST_DIR = DATASET / "test"
 INIT_DIR = TEST_DIR / "initialize"
