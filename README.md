@@ -100,7 +100,7 @@ checkpoints/
 
 ## 6. 模型训练
 
-配置好数据集路径和python环境后在VSCode右键开始运行即可开始训练：
+配置好数据集路径和python环境后在VSCode右键开始运行即可开始训练。
 
 ## 7.引用
 
@@ -143,17 +143,17 @@ This repository contains:
 ```text
 SOLID-Net/
 ├── training/
-│   ├── train.py
-│   ├── dataset.py
-│   └── model.py
+│   ├── Fusion Model.py
+│   ├── vision.py
+│   └── emg.py
 ├── comparison_experiments/
-│   ├── method1.py
-│   ├── method2.py
-│   └── compare.py
+│   ├── Comparison-Emg.py
+│   ├── Comparison-Vis.py
+│   └── Comparison-Fusion.py
 ├── ablation_experiments/
-│   ├── ablation_a.py
-│   ├── ablation_b.py
-│   └── ablation_main.py
+│   ├── Ablation-Emg.py
+│   ├── Ablation-Vis.py
+│   └── Ablation-Fusion.py
 ├── requirements.txt
 └── README.md
 ```
@@ -163,7 +163,7 @@ SOLID-Net/
 Recommended Python version:
 
 ```text
-Python >= 3.9
+Python == 3.11.14
 ```
 
 Install dependencies:
@@ -220,43 +220,9 @@ checkpoints/
 
 ## 6. Training
 
-Run the following command for training:
+After configuring the dataset path and Python environment, you can start training by right-clicking and running in VSCode.
 
-```bash
-python training/train.py
-```
-
-If your code requires arguments, use:
-
-```bash
-python training/train.py --data_path ./data --save_path ./checkpoints
-```
-
-## 7. Comparison Experiments
-
-Run comparison experiments:
-
-```bash
-python comparison_experiments/compare.py
-```
-
-## 8. Ablation Experiments
-
-Run ablation experiments:
-
-```bash
-python ablation_experiments/ablation_main.py
-```
-
-## 9. Results
-
-| Method | Metric 1 | Metric 2 | Metric 3 |
-|---|---:|---:|---:|
-| Method A | xx | xx | xx |
-| Method B | xx | xx | xx |
-| SOLID-Net | xx | xx | xx |
-
-## 10. Citation
+## 7. Citation
 
 If you find this project helpful, please cite:
 
@@ -274,4 +240,4 @@ If you find this project helpful, please cite:
 If you have any questions, please contact:
 
 - GitHub Issues: https://github.com/Public-Lyh/SOLID-Net/issues
-- Email: your_email@example.com
+- Email: luoyuhang963@gmail.com 、 2586160590@qq.com
