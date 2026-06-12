@@ -1,23 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-SOLID-Net: Stable Online Learning Independent Decision-fusion Network
-=====================================================================
-Version: V8.1 - Confusion-Aware Adaptive Fusion
-
-Architecture:
-  IKUN (Top-level) → Independent Keystone Unified Nexus
-    ├── SC-MSFE (EMG)    → Six-Channel Multi-Scale Feature Extraction
-    ├── CAST-Net (Visual) → Contextual Attention Sequential Temporal Network
-    └── SOLID-Net (Fusion) → This module
-
-Key Fix (V8.1 vs V8):
-  - Confusion-aware weight initialization from actual per-class accuracy
-  - Two-phase training: Phase1=weight discovery, Phase2=fine-tune
-  - Per-class trust scoring based on single-modality confusion matrices
-  - Better handling of classes where Visual >> EMG
-"""
-
 import os
 import sys
 import json
@@ -38,7 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.calibration import CalibratedClassifierCV
 import numpy as np
 import pandas as pd
 import torch
@@ -48,9 +28,7 @@ import torch.optim as optim
 import torchvision.transforms as T
 from torchvision import models
 from scipy.fft import fft
-from sklearn.metrics import (accuracy_score, f1_score, precision_score,
-                             recall_score, confusion_matrix)
-from sklearn.preprocessing import StandardScaler
+from scipy.special import softmax
 from tqdm import tqdm
 import cv2
 import matplotlib
@@ -67,10 +45,9 @@ except ImportError:
 
 warnings.filterwarnings('ignore')
 
-# ============================================================
-# Path Configuration
-# ============================================================
-ROOT_PATH = Path("/home/luoyh/deep_learning_project/Dataset")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ROOT_PATH = Path(os.getenv("FUSION_DATASET_ROOT", PROJECT_ROOT / "Dataset")).expanduser().resolve()
 HAND_DETECT_MODEL = ROOT_PATH / "models" / "best.pt"
 VISUAL_MODEL_PATH = ROOT_PATH / "models" / "mvtf_visual.pth"
 EMG_MODEL_DIR = ROOT_PATH / "models" / "EMG"
@@ -80,9 +57,6 @@ OUTPUT_DIR = ROOT_PATH / "models" / "Fusion" / "V8"
 
 NUM_CLASSES = 13
 
-# ============================================================
-# Gesture Labels
-# ============================================================
 GESTURE_LABELS = (
     'Fist Clench', 'Finger Extension', 'Wrist Rotation',
     'Finger Opposition', 'Ball Squeeze', 'TheraPutty Pinch',
@@ -95,7 +69,6 @@ GESTURE_NAMES_SHORT = (
     'Interlace', 'Flexion', 'Massage', 'Towel', 'Tapping', 'Piano'
 )
 
-# 由混淆矩阵分析得出的问题类别
 PROBLEM_CLASSES = {
     0: 'Fist Clench',
     1: 'Finger Extension',
@@ -103,22 +76,18 @@ PROBLEM_CLASSES = {
     12: 'Piano Tap',
 }
 
-# EMG容易混淆的类别对 (from confusion matrix analysis)
 EMG_CONFUSION_PAIRS = {
-    0: [1, 4],      # Fist -> Extension, Ball
-    4: [3, 0],      # Ball -> Opposition, Fist
-    5: [4, 6],      # Putty -> Ball, Press
-    6: [5],          # Press -> Putty
-    9: [5, 8],       # Massage -> Putty, Flexion
-    11: [5],         # Tapping -> Putty
-    12: [5],         # Piano -> Putty
+    0: [1, 4],
+    4: [3, 0],
+    5: [4, 6],
+    6: [5],
+    9: [5, 8],
+    11: [5],
+    12: [5],
 }
 
-# Visual表现好的类别 (from visual confusion matrix: 100% recall)
-VISUAL_STRONG_CLASSES = {3, 4, 6, 7}   # Opposition, Ball, Press, Interlace
-
-# EMG表现好的类别
-EMG_STRONG_CLASSES = {1, 8, 10}   # Extension, Flexion, Towel
+VISUAL_STRONG_CLASSES = {3, 4, 6, 7}
+EMG_STRONG_CLASSES = {1, 8, 10}
 
 
 def build_gesture_label_map():
@@ -179,7 +148,7 @@ def select_gpu():
                 if len(parts) >= 3 and int(parts[0]) == 1:
                     if float(parts[1]) / float(parts[2]) < 0.8:
                         return 'cuda:1'
-    except:
+    except Exception:
         pass
     return 'cuda:1' if torch.cuda.is_available() else 'cpu'
 
@@ -196,24 +165,22 @@ class FusionConfig:
     hand_conf: float = 0.25
     hand_padding: float = 0.15
     output_size: int = 224
-    # Training
     fusion_lr: float = 0.008
     fusion_epochs: int = 150
-    phase1_epochs: int = 60       # Phase 1: weight discovery
-    phase2_epochs: int = 90       # Phase 2: fine-tune
+    phase1_epochs: int = 60
+    phase2_epochs: int = 90
     phase1_lr: float = 0.015
     phase2_lr: float = 0.005
-    # Power save
     power_save_threshold: int = 5
     power_save_step_multiplier: int = 3
-    # Loss
     focal_gamma: float = 2.0
     problem_class_weight: float = 3.0
-    weak_class_weight: float = 2.5    # 对单模态弱势类加权
+    weak_class_weight: float = 2.5
     min_weight: float = 0.10
-    # Confusion-aware
     confusion_penalty: float = 0.5
-    trust_momentum: float = 0.3       # 信任度动量更新
+    trust_momentum: float = 0.3
+    train_fraction: float = 0.7
+    random_seed: int = 42
 
 
 class BaseModalityModel(ABC):
@@ -230,13 +197,7 @@ class BaseModalityModel(ABC):
     def load(self, path: Path) -> bool:
         pass
 
-
-# ============================================================
-# SC-MSFE Feature Extractor (752-dim)
-# ============================================================
 class SCMSFEFeatureExtractor:
-    """Six-Channel Multi-Scale Feature Extraction - 752 dim"""
-
     def __init__(self, num_channels=6, window_size=180):
         self.num_channels = num_channels
         self.window_size = window_size
@@ -421,12 +382,7 @@ class SCMSFEFeatureExtractor:
         return result
 
 
-# ============================================================
-# SC-MSFE (EMG Model)
-# ============================================================
 class SCMSFE(BaseModalityModel):
-    """Six-Channel Multi-Scale Feature Extraction"""
-
     def __init__(self, config: FusionConfig):
         super().__init__("SC-MSFE", config.num_classes)
         self.config = config
@@ -511,13 +467,9 @@ class SCMSFE(BaseModalityModel):
                 for i in range(min(proba.shape[1], self.num_classes)):
                     full_proba[i] = proba[0, i]
             return full_proba / (full_proba.sum() + 1e-10)
-        except:
+        except Exception:
             return np.ones(self.num_classes) / self.num_classes
 
-
-# ============================================================
-# CAST-Net Visual Model Components
-# ============================================================
 class GrayVariation(nn.Module):
     def __init__(self, eta=16):
         super().__init__()
@@ -627,8 +579,6 @@ class HierarchicalModule(nn.Module):
 
 
 class CASTNetBackbone(nn.Module):
-    """Contextual Attention Sequential Temporal Network"""
-
     def __init__(self, num_classes=13, hidden_dim=256, num_heads=4, dropout=0.3):
         super().__init__()
         self.gvar = GrayVariation(eta=16)
@@ -668,9 +618,6 @@ class CASTNetBackbone(nn.Module):
         return self.head(self.fusion(torch.cat([seq_feat, hier_feat], dim=-1)))
 
 
-# ============================================================
-# Hand Detector with Cache
-# ============================================================
 class HandDetector:
     def __init__(self, model_path: Path, device: str):
         self.model = None
@@ -708,7 +655,7 @@ class HandDetector:
                     cropped = img_rgb[y1:y2, x1:x2]
                     if cropped.size > 0:
                         result_img = cv2.resize(cropped, (output_size, output_size))
-            except:
+            except Exception:
                 pass
         if result_img is None:
             size = min(h, w)
@@ -721,12 +668,7 @@ class HandDetector:
         return result_img
 
 
-# ============================================================
-# CAST-Net (Visual Model)
-# ============================================================
 class CASTNet(BaseModalityModel):
-    """Contextual Attention Sequential Temporal Network"""
-
     def __init__(self, config: FusionConfig):
         super().__init__("CAST-Net", config.num_classes)
         self.config = config
@@ -793,10 +735,6 @@ class CASTNet(BaseModalityModel):
             output = self.model(batch)
             return F.softmax(output, dim=-1).squeeze(0).cpu().numpy()
 
-
-# ============================================================
-# Focal Loss
-# ============================================================
 class FocalLoss(nn.Module):
     def __init__(self, gamma=2.0, alpha=None, reduction='mean'):
         super().__init__()
@@ -814,15 +752,62 @@ class FocalLoss(nn.Module):
         return focal_loss.mean() if self.reduction == 'mean' else focal_loss
 
 
-# ============================================================
-# SOLID-Net: Adaptive Confusion-Aware Fusion
-# ============================================================
-class AdaptiveWeightModule(nn.Module):
-    """
-    根据单模态实际表现自适应初始化权重,
-    而非仅用固定先验.
-    """
+class StackingMetaLearner(nn.Module):
+    def __init__(self, num_modalities, num_classes, hidden_dim=64):
+        super().__init__()
+        input_dim = num_modalities * num_classes
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
 
+    def forward(self, modality_probas):
+        concat = torch.cat(modality_probas, dim=-1)
+        return self.net(concat)
+
+
+class MixtureOfExpertsGate(nn.Module):
+    def __init__(self, num_modalities, num_classes, hidden_dim=32):
+        super().__init__()
+        self.num_modalities = num_modalities
+        self.num_classes = num_classes
+        self.gate = nn.Sequential(
+            nn.Linear(num_modalities * num_classes, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim, num_modalities * num_classes),
+            nn.Softmax(dim=-1)
+        )
+
+    def forward(self, modality_probas):
+        concat = torch.cat(modality_probas, dim=-1)
+        weights = self.gate(concat).view(-1, self.num_modalities, self.num_classes)
+        weighted = torch.stack(modality_probas, dim=1) * weights
+        return weighted.sum(dim=1)
+
+
+class TemperatureScalingCalibrator:
+    def __init__(self, num_modalities):
+        self.temperatures = [nn.Parameter(torch.ones(1)) for _ in range(num_modalities)]
+
+    def calibrate_proba(self, proba, modality_idx):
+        temp = F.softplus(self.temperatures[modality_idx]) + 0.1
+        log_proba = torch.log(proba + 1e-10)
+        calibrated = F.softmax(log_proba / temp, dim=-1)
+        return calibrated
+
+    def parameters(self):
+        return self.temperatures
+
+
+class AdaptiveWeightModule(nn.Module):
     def __init__(self, num_classes, num_modalities,
                  emg_per_class_acc=None, vis_per_class_acc=None,
                  min_weight=0.10):
@@ -831,7 +816,6 @@ class AdaptiveWeightModule(nn.Module):
         self.num_modalities = num_modalities
         self.min_weight = min_weight
 
-        # 基于实际准确率初始化
         init_logits = torch.zeros(num_modalities, num_classes)
         if emg_per_class_acc is not None and vis_per_class_acc is not None:
             print("\n  [Adaptive Weights] Initializing from per-class accuracy:")
@@ -839,22 +823,18 @@ class AdaptiveWeightModule(nn.Module):
                 emg_acc = emg_per_class_acc.get(c, 0.5)
                 vis_acc = vis_per_class_acc.get(c, 0.5)
 
-                # 用softmax分配: 谁准确率高谁权重大
                 total = emg_acc + vis_acc + 1e-10
                 emg_w = np.clip(emg_acc / total, min_weight, 1.0 - min_weight)
                 vis_w = np.clip(vis_acc / total, min_weight, 1.0 - min_weight)
 
-                # 对已知"视觉强势"类进一步偏移
                 if c in VISUAL_STRONG_CLASSES and vis_acc > emg_acc:
                     vis_w = min(0.85, vis_w * 1.3)
                     emg_w = 1.0 - vis_w
 
-                # 对已知"EMG强势"类
                 if c in EMG_STRONG_CLASSES and emg_acc > vis_acc:
                     emg_w = min(0.85, emg_w * 1.3)
                     vis_w = 1.0 - emg_w
 
-                # 对EMG混淆严重的类，降低EMG权重
                 if c in EMG_CONFUSION_PAIRS:
                     emg_w = max(min_weight, emg_w * 0.7)
                     vis_w = 1.0 - emg_w
@@ -862,12 +842,12 @@ class AdaptiveWeightModule(nn.Module):
                 init_logits[0, c] = np.log(emg_w / (1 - emg_w + 1e-10))
                 init_logits[1, c] = np.log(vis_w / (1 - vis_w + 1e-10))
 
-                emg_tag = "★" if emg_acc > vis_acc else " "
-                vis_tag = "★" if vis_acc > emg_acc else " "
+                emg_tag = "*" if emg_acc > vis_acc else " "
+                vis_tag = "*" if vis_acc > emg_acc else " "
                 print(f"    G{c + 1:2d} {GESTURE_LABELS[c]:<25}: "
                       f"EMG_acc={emg_acc * 100:5.1f}%{emg_tag} "
                       f"VIS_acc={vis_acc * 100:5.1f}%{vis_tag} "
-                      f"→ EMG_w={emg_w:.2f}, VIS_w={vis_w:.2f}")
+                      f"-> EMG_w={emg_w:.2f}, VIS_w={vis_w:.2f}")
 
         self.weight_logits = nn.Parameter(init_logits)
 
@@ -889,7 +869,6 @@ class ConfusionAwareNormalization(nn.Module):
         self.scale = nn.Parameter(torch.ones(num_modalities, num_classes))
         self.bias = nn.Parameter(torch.zeros(num_modalities, num_classes))
 
-        # EMG混淆矩阵惩罚
         cm = torch.zeros(num_classes, num_classes)
         for pc, targets in EMG_CONFUSION_PAIRS.items():
             for t in targets:
@@ -908,23 +887,15 @@ class ConfusionAwareNormalization(nn.Module):
         log_p = torch.log(proba + 1e-10)
         scaled = log_p / adj_temp.unsqueeze(0) * scale.unsqueeze(0) + bias.unsqueeze(0)
         if predicted_class is not None and predicted_class < self.num_classes:
-            # 只对EMG (idx=0) 施加混淆惩罚
             if modality_idx == 0:
                 scaled = scaled - self.confusion_matrix[predicted_class].unsqueeze(0) * 0.5
         return F.softmax(scaled, dim=-1).squeeze(0)
 
 
 class DisagreementResolver(nn.Module):
-    """
-    当EMG和Visual不一致时, 进行仲裁:
-    - 如果分歧类别在Visual强势列表中, 偏向Visual
-    - 否则看哪个模态置信度更高
-    """
-
     def __init__(self, num_classes):
         super().__init__()
         self.num_classes = num_classes
-        # 可学习的仲裁参数
         self.arbitration_bias = nn.Parameter(torch.zeros(num_classes))
 
     def forward(self, emg_proba, vis_proba, emg_weight, vis_weight, fused_proba):
@@ -934,27 +905,22 @@ class DisagreementResolver(nn.Module):
         if emg_pred == vis_pred:
             return fused_proba
 
-        # 不一致 → 仲裁
         emg_conf = emg_proba[emg_pred].item()
         vis_conf = vis_proba[vis_pred].item()
 
         adjusted = fused_proba.clone()
 
-        # 视觉强势类: 视觉说了算（如果视觉置信度足够）
         if vis_pred in VISUAL_STRONG_CLASSES and vis_conf > 0.3:
             boost = 0.15 + F.sigmoid(self.arbitration_bias[vis_pred]).item() * 0.15
             adjusted[vis_pred] = adjusted[vis_pred] + boost
-            # 抑制EMG预测的类（如果EMG预测的类在混淆对中）
             if emg_pred in EMG_CONFUSION_PAIRS:
                 adjusted[emg_pred] = adjusted[emg_pred] * 0.7
 
-        # EMG对某些类经常混淆 → 降低EMG那个预测的权重
         if emg_pred in EMG_CONFUSION_PAIRS:
             confused_targets = EMG_CONFUSION_PAIRS[emg_pred]
             if vis_pred in confused_targets or vis_pred == emg_pred:
-                pass  # 一致或视觉也认同混淆类
+                pass
             else:
-                # 视觉不认同EMG的混淆类预测
                 adjusted[emg_pred] = adjusted[emg_pred] * 0.75
                 adjusted[vis_pred] = adjusted[vis_pred] * 1.2
 
@@ -963,8 +929,6 @@ class DisagreementResolver(nn.Module):
 
 
 class SOLIDNet(nn.Module):
-    """Stable Online Learning Independent Decision-fusion Network"""
-
     def __init__(self, num_classes, modality_names, device='cuda', config=None,
                  emg_per_class_acc=None, vis_per_class_acc=None):
         super().__init__()
@@ -984,6 +948,10 @@ class SOLIDNet(nn.Module):
             num_classes, self.num_modalities, self.config)
         self.disagreement = DisagreementResolver(num_classes)
 
+        self.stacking = StackingMetaLearner(self.num_modalities, num_classes)
+        self.moe_gate = MixtureOfExpertsGate(self.num_modalities, num_classes)
+        self.calibrator = TemperatureScalingCalibrator(self.num_modalities)
+
         self.modality_to_idx = {name: i for i, name in enumerate(modality_names)}
 
         class_weights = torch.ones(num_classes)
@@ -992,11 +960,10 @@ class SOLIDNet(nn.Module):
         self.register_buffer('class_weights', class_weights)
         self.focal_loss = FocalLoss(gamma=self.config.focal_gamma, alpha=class_weights)
 
-    def forward(self, modality_probas):
+    def forward(self, modality_probas, fusion_method='adaptive'):
         weights = self.base_weights()
         fused = torch.zeros(self.num_classes, device=self.device)
 
-        # 存储各模态概率
         modal_proba_tensors = {}
         for name, proba in modality_probas.items():
             if name not in self.modality_to_idx:
@@ -1005,32 +972,74 @@ class SOLIDNet(nn.Module):
                 torch.tensor(proba, device=self.device, dtype=torch.float32)
             modal_proba_tensors[name] = pt
 
-        # 初步预测（用于混淆感知归一化）
-        prelim = torch.zeros(self.num_classes, device=self.device)
-        for name, pt in modal_proba_tensors.items():
-            idx = self.modality_to_idx[name]
-            prelim += weights[idx] * pt
-        prelim_pred = torch.argmax(prelim).item()
+        if fusion_method == 'stacking' and len(modal_proba_tensors) >= 2:
+            proba_list = [
+                modal_proba_tensors[name]
+                for name in self.modality_names
+                if name in modal_proba_tensors
+            ]
+            if len(proba_list) == self.num_modalities:
+                logits = self.stacking(proba_list)
+                fused = F.softmax(logits, dim=-1)
+                sorted_fused = torch.sort(fused, descending=True)[0]
+                result = {
+                    'fused_proba': fused,
+                    'prediction': torch.argmax(fused).item(),
+                    'confidence': (sorted_fused[0] - sorted_fused[1]).item(),
+                    'weights': weights.detach(),
+                    'method': 'stacking'
+                }
+                return result
 
-        # 混淆感知归一化融合
-        for name, pt in modal_proba_tensors.items():
-            idx = self.modality_to_idx[name]
-            norm_proba = self.normalizer(pt, weights[idx], idx, prelim_pred)
-            fused += weights[idx] * norm_proba
+        elif fusion_method == 'moe' and len(modal_proba_tensors) >= 2:
+            proba_list = [
+                modal_proba_tensors[name]
+                for name in self.modality_names
+                if name in modal_proba_tensors
+            ]
+            if len(proba_list) == self.num_modalities:
+                fused = self.moe_gate(proba_list)
+                sorted_fused = torch.sort(fused, descending=True)[0]
+                result = {
+                    'fused_proba': fused,
+                    'prediction': torch.argmax(fused).item(),
+                    'confidence': (sorted_fused[0] - sorted_fused[1]).item(),
+                    'weights': weights.detach(),
+                    'method': 'moe'
+                }
+                return result
 
-        fused = fused / (fused.sum() + 1e-10)
+        elif fusion_method == 'calibrated':
+            for name, pt in modal_proba_tensors.items():
+                idx = self.modality_to_idx[name]
+                calibrated = self.calibrator.calibrate_proba(pt, idx)
+                fused += weights[idx] * calibrated
+            fused = fused / (fused.sum() + 1e-10)
 
-        # 如果两个模态都存在, 进行分歧仲裁
-        if 'SC-MSFE' in modal_proba_tensors and 'CAST-Net' in modal_proba_tensors:
-            emg_idx = self.modality_to_idx['SC-MSFE']
-            vis_idx = self.modality_to_idx['CAST-Net']
-            fused = self.disagreement(
-                modal_proba_tensors['SC-MSFE'],
-                modal_proba_tensors['CAST-Net'],
-                weights[emg_idx],
-                weights[vis_idx],
-                fused
-            )
+        else:
+            prelim = torch.zeros(self.num_classes, device=self.device)
+            for name, pt in modal_proba_tensors.items():
+                idx = self.modality_to_idx[name]
+                prelim += weights[idx] * pt
+            prelim_pred = torch.argmax(prelim).item()
+
+            for name, pt in modal_proba_tensors.items():
+                idx = self.modality_to_idx[name]
+                norm_proba = self.normalizer(pt, weights[idx], idx, prelim_pred)
+                fused += weights[idx] * norm_proba
+
+            fused = fused / (fused.sum() + 1e-10)
+
+            if 'SC-MSFE' in modal_proba_tensors and 'CAST-Net' in modal_proba_tensors:
+                emg_idx = self.modality_to_idx['SC-MSFE']
+                vis_idx = self.modality_to_idx['CAST-Net']
+                fused = self.disagreement(
+                    modal_proba_tensors['SC-MSFE'],
+                    modal_proba_tensors['CAST-Net'],
+                    weights[emg_idx],
+                    weights[vis_idx],
+                    fused
+                )
 
         sorted_p, _ = torch.sort(fused, descending=True)
         confidence = (sorted_p[0] - sorted_p[1]).item()
@@ -1039,17 +1048,14 @@ class SOLIDNet(nn.Module):
             'fused_proba': fused,
             'prediction': torch.argmax(fused).item(),
             'confidence': confidence,
-            'weights': weights.detach()
+            'weights': weights.detach(),
+            'method': fusion_method
         }
 
     def compute_loss(self, fused_proba, label):
         return self.focal_loss(fused_proba.unsqueeze(0),
                                torch.tensor([label], device=self.device))
 
-
-# ============================================================
-# Data Loader
-# ============================================================
 class FusionDataLoader:
     def __init__(self, config: FusionConfig):
         self.config = config
@@ -1078,7 +1084,7 @@ class FusionDataLoader:
             try:
                 df = pd.read_csv(filepath, encoding=enc)
                 break
-            except:
+            except Exception:
                 continue
         if df is None:
             return []
@@ -1153,7 +1159,7 @@ class FusionDataLoader:
             try:
                 df = pd.read_csv(filepath, encoding=enc)
                 break
-            except:
+            except Exception:
                 continue
         if df is None:
             return None
@@ -1178,9 +1184,6 @@ class FusionDataLoader:
         return windows if windows else None
 
 
-# ============================================================
-# Fusion System Manager
-# ============================================================
 class FusionSystemManager:
     def __init__(self, config: FusionConfig):
         self.config = config
@@ -1201,7 +1204,6 @@ class FusionSystemManager:
         print(f"  [HotPlug] Registered: {name} ({'OK' if model.is_loaded else 'FAILED'})")
 
     def compute_visual_accuracy(self, data):
-        """在收集预测前先评估visual单模态表现，用于权重初始化"""
         cast_net = self.modality_models.get('CAST-Net')
         if not cast_net or not cast_net.is_loaded:
             return {}
@@ -1235,7 +1237,7 @@ class FusionSystemManager:
             else:
                 acc = 0.0
             per_class_acc[gid] = acc
-            tag = " ★" if acc >= 0.8 else ""
+            tag = " [high]" if acc >= 0.8 else ""
             print(f"    G{gid + 1:2d} {GESTURE_LABELS[gid]:<25}: "
                   f"{acc * 100:5.1f}% ({cc[gid]}/{ct[gid]}){tag}")
 
@@ -1244,7 +1246,6 @@ class FusionSystemManager:
         return per_class_acc
 
     def compute_emg_accuracy(self, data):
-        """评估EMG单模态表现"""
         emg_model = self.modality_models.get('SC-MSFE')
         if not emg_model or not emg_model.is_loaded:
             return {}
@@ -1271,7 +1272,7 @@ class FusionSystemManager:
             else:
                 acc = 0.0
             per_class_acc[gid] = acc
-            tag = " ★" if acc >= 0.8 else ""
+            tag = " [high]" if acc >= 0.8 else ""
             print(f"    G{gid + 1:2d} {GESTURE_LABELS[gid]:<25}: "
                   f"{acc * 100:5.1f}% ({cc[gid]}/{ct[gid]}){tag}")
 
@@ -1340,19 +1341,16 @@ class FusionSystemManager:
         print(f"  Phase 2: {self.config.phase2_epochs} epochs @ lr={self.config.phase2_lr}")
         print(f"{'=' * 70}")
 
-        # 过采样: 问题类别 + 视觉强势但融合弱势的类
         augmented = train_samples.copy()
         weak_fusion_classes = set()
         for s in train_samples:
             label = s['label']
-            # 视觉强势但EMG弱势的类需要多采样, 确保fusion学会信任visual
             if label in VISUAL_STRONG_CLASSES:
                 augmented.append(s)
                 weak_fusion_classes.add(label)
             if label in PROBLEM_CLASSES:
                 for _ in range(2):
                     augmented.append(s)
-            # EMG混淆严重的类
             if label in EMG_CONFUSION_PAIRS:
                 augmented.append(s)
 
@@ -1363,7 +1361,6 @@ class FusionSystemManager:
         best_score = 0
         best_state = None
 
-        # ========== Phase 1: Weight Discovery ==========
         print(f"\n  --- Phase 1: Weight Discovery ---")
         optimizer = optim.Adam(self.fusion_model.parameters(), lr=self.config.phase1_lr)
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=15, T_mult=2)
@@ -1393,7 +1390,6 @@ class FusionSystemManager:
                 loss = self.fusion_model.compute_loss(fp, label)
 
                 pred = torch.argmax(fp).item()
-                # 对视觉强势类但融合错误的，加大惩罚
                 if label in VISUAL_STRONG_CLASSES and pred != label:
                     loss = loss * 2.0
                 elif label in PROBLEM_CLASSES and pred != label:
@@ -1416,7 +1412,6 @@ class FusionSystemManager:
             acc = correct / max(total, 1)
             pr = [pcc[pc] / pct[pc] for pc in PROBLEM_CLASSES if pct[pc] > 0]
             apr = np.mean(pr) if pr else 0
-            # 也考虑视觉强势类的recall
             vsr = [pcc[vc] / pct[vc] for vc in VISUAL_STRONG_CLASSES if pct[vc] > 0]
             avsr = np.mean(vsr) if vsr else 0
 
@@ -1439,7 +1434,6 @@ class FusionSystemManager:
             self.fusion_model.load_state_dict(best_state)
         print(f"  Phase 1 Best: {best_score * 100:.1f}%")
 
-        # ========== Phase 2: Fine-tune ==========
         print(f"\n  --- Phase 2: Fine-tune ---")
         optimizer = optim.Adam(self.fusion_model.parameters(), lr=self.config.phase2_lr)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.config.phase2_epochs)
@@ -1527,9 +1521,9 @@ class FusionSystemManager:
             if i in PROBLEM_CLASSES:
                 flag = " [PROBLEM]"
             elif i in VISUAL_STRONG_CLASSES:
-                flag = " [VIS★]"
+                flag = " [VIS]"
             elif i in EMG_STRONG_CLASSES:
-                flag = " [EMG★]"
+                flag = " [EMG]"
             print(f"    G{i + 1:2d} {label:<25}: {', '.join(parts)}{flag}")
 
     def save(self, save_dir):
@@ -1559,12 +1553,7 @@ class FusionSystemManager:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
         print(f"  [Save] SOLID-Net -> {save_dir}")
 
-
-# ============================================================
-# Visualization
-# ============================================================
 class ResultVisualizer:
-
     def __init__(self, save_dir: Path):
         self.save_dir = save_dir
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -1643,7 +1632,7 @@ class ResultVisualizer:
                         f'{v:.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
 
         ax.set_ylabel('Score (%)', fontsize=13, fontweight='bold')
-        ax.set_title('Model Performance Comparison\n(SC-MSFE vs CAST-Net vs SOLID-Net)',
+        ax.set_title('Model Performance Comparison',
                      fontsize=16, fontweight='bold')
         ax.set_xticks(x)
         ax.set_xticklabels(metric_display, fontsize=12)
@@ -1689,15 +1678,6 @@ class ResultVisualizer:
         ax.set_title('Per-class Recall Radar Chart', fontsize=15, fontweight='bold', pad=20)
         ax.legend(loc='upper right', bbox_to_anchor=(1.35, 1.1), fontsize=11)
 
-        for pc in PROBLEM_CLASSES:
-            if pc < n_cats:
-                ax.annotate('★PROB', xy=(angles[pc], 108), fontsize=8, color='red',
-                            ha='center', va='center')
-        for vc in VISUAL_STRONG_CLASSES:
-            if vc < n_cats:
-                ax.annotate('◆VIS', xy=(angles[vc], 108), fontsize=7, color='purple',
-                            ha='center', va='center')
-
         plt.tight_layout()
         plt.savefig(self.save_dir / 'radar_chart.png', dpi=300, bbox_inches='tight')
         plt.close()
@@ -1709,12 +1689,6 @@ class ResultVisualizer:
 
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         epochs = range(1, len(training_stats['losses']) + 1)
-        n_total = len(training_stats['losses'])
-
-        # Phase boundary
-        phase1_end = None
-        for key in ['phase1_epochs']:
-            pass
 
         axes[0, 0].plot(epochs, training_stats['losses'], 'b-', linewidth=1.5)
         axes[0, 0].set_title('Training Loss', fontsize=13, fontweight='bold')
@@ -1774,7 +1748,7 @@ class ResultVisualizer:
                           label=dn, color=cl, alpha=0.85, edgecolor='white')
 
         ax.set_ylabel('Recall (%)', fontsize=13, fontweight='bold')
-        ax.set_title('Per-class Recall Comparison\n(SC-MSFE vs CAST-Net vs SOLID-Net)',
+        ax.set_title('Per-class Recall Comparison',
                      fontsize=16, fontweight='bold')
         ax.set_xticks(x)
         ax.set_xticklabels(GESTURE_NAMES_SHORT, rotation=45, ha='right', fontsize=10)
@@ -1785,9 +1759,9 @@ class ResultVisualizer:
 
         for pc in PROBLEM_CLASSES:
             ax.axvspan(pc - 0.45, pc + 0.45, alpha=0.08, color='red')
-            ax.text(pc, 115, '★PROB', ha='center', fontsize=8, color='red')
+            ax.text(pc, 115, 'PROB', ha='center', fontsize=8, color='red')
         for vc in VISUAL_STRONG_CLASSES:
-            ax.text(vc, 112, '◆VIS', ha='center', fontsize=7, color='purple')
+            ax.text(vc, 112, 'VIS', ha='center', fontsize=7, color='purple')
 
         plt.tight_layout()
         plt.savefig(self.save_dir / 'per_class_recall.png', dpi=300, bbox_inches='tight')
@@ -1795,7 +1769,6 @@ class ResultVisualizer:
         print(f"  [Plot] per_class_recall.png")
 
     def plot_weight_heatmap(self, metrics):
-        """绘制融合权重热力图"""
         if 'fusion_weights' not in metrics:
             return
         weights = np.array(metrics['fusion_weights'])
@@ -1807,7 +1780,7 @@ class ResultVisualizer:
                     xticklabels=GESTURE_NAMES_SHORT,
                     yticklabels=['SC-MSFE', 'CAST-Net'],
                     ax=ax, vmin=0, vmax=1, annot_kws={'size': 10})
-        ax.set_title('SOLID-Net Learned Fusion Weights', fontsize=14, fontweight='bold')
+        ax.set_title('Learned Fusion Weights', fontsize=14, fontweight='bold')
         ax.tick_params(axis='x', rotation=45, labelsize=10)
         ax.tick_params(axis='y', rotation=0, labelsize=11)
 
@@ -1817,9 +1790,6 @@ class ResultVisualizer:
         print(f"  [Plot] weight_heatmap.png")
 
 
-# ============================================================
-# Main System
-# ============================================================
 class MultimodalFusionSystem:
     def __init__(self, config=None):
         self.config = config or FusionConfig()
@@ -1832,14 +1802,12 @@ class MultimodalFusionSystem:
         print("Loading Modality Models")
         print(f"{'=' * 70}")
 
-        # SC-MSFE
         emg_model = SCMSFE(self.config)
         if emg_model.load(EMG_MODEL_DIR):
             self.manager.register_modality("SC-MSFE", emg_model)
         else:
             print("  [WARN] SC-MSFE not loaded!")
 
-        # CAST-Net
         print(f"\n  [CAST-Net] Model path: {VISUAL_MODEL_PATH}")
         cast_net = CASTNet(self.config)
         if cast_net.load(VISUAL_MODEL_PATH):
@@ -1849,7 +1817,7 @@ class MultimodalFusionSystem:
 
         print(f"\n  Model Status:")
         for name, model in self.manager.modality_models.items():
-            status = "✓ OK" if model.is_loaded else "✗ FAILED"
+            status = "OK" if model.is_loaded else "FAILED"
             print(f"    {name:<15}: {status}")
 
         n_loaded = sum(1 for m in self.manager.modality_models.values() if m.is_loaded)
@@ -1912,10 +1880,6 @@ class MultimodalFusionSystem:
         return samples
 
     def pre_evaluate_modalities(self, data):
-        """
-        训练前先评估两个模态的单独表现,
-        用于自适应权重初始化
-        """
         print(f"\n{'=' * 70}")
         print("Pre-evaluating Single-Modality Performance")
         print(f"{'=' * 70}")
@@ -1923,7 +1887,6 @@ class MultimodalFusionSystem:
         self.manager.emg_per_class_acc = self.manager.compute_emg_accuracy(data)
         self.manager.vis_per_class_acc = self.manager.compute_visual_accuracy(data)
 
-        # 分析互补性
         print(f"\n  [Complementarity Analysis]")
         for gid in range(NUM_CLASSES):
             ea = self.manager.emg_per_class_acc.get(gid, 0)
@@ -1933,23 +1896,18 @@ class MultimodalFusionSystem:
                 gap = abs(ea - va) * 100
                 marker = ""
                 if gid in PROBLEM_CLASSES:
-                    marker = " ★PROB"
+                    marker = " PROB"
                 elif gid in VISUAL_STRONG_CLASSES:
-                    marker = " ◆VIS"
+                    marker = " VIS"
                 elif gid in EMG_STRONG_CLASSES:
-                    marker = " ■EMG"
+                    marker = " EMG"
                 print(f"    G{gid + 1:2d} {GESTURE_LABELS[gid]:<25}: "
                       f"EMG={ea * 100:5.1f}% vs VIS={va * 100:5.1f}% "
-                      f"→ {better} (+{gap:.1f}%){marker}")
+                      f"-> {better} (+{gap:.1f}%){marker}")
 
     def train(self, data):
-        # 先评估单模态 → 用于权重初始化
         self.pre_evaluate_modalities(data)
-
-        # 初始化fusion model (利用per-class accuracy)
         self.manager.init_fusion_model()
-
-        # 收集训练样本
         train_samples = self.collect_predictions(data)
         print(f"\n  Collected {len(train_samples)} training samples")
         n_both = sum(1 for s in train_samples if 'emg_proba' in s and 'vis_proba' in s)
@@ -1993,14 +1951,12 @@ class MultimodalFusionSystem:
             emg_windows = data[gid]['emg']
             vis_frames = data[gid]['visual']
 
-            # EMG only
             if has_emg and emg_windows:
                 for X in emg_windows:
                     proba = self.manager.modality_models['SC-MSFE'].predict_proba(X)
                     results['emg_only']['preds'].append(int(np.argmax(proba)))
                     results['emg_only']['labels'].append(gid)
 
-            # Visual only
             if has_vis and vis_frames:
                 n_seqs = max(1, len(vis_frames) // seq_len)
                 for i in range(n_seqs):
@@ -2011,7 +1967,6 @@ class MultimodalFusionSystem:
                         results['visual_only']['preds'].append(int(np.argmax(proba)))
                         results['visual_only']['labels'].append(gid)
 
-            # Fusion
             n_emg = len(emg_windows) if emg_windows else 0
             n_vis_seqs = max(1, len(vis_frames) // seq_len) if vis_frames else 0
 
@@ -2039,7 +1994,6 @@ class MultimodalFusionSystem:
                 results['fusion']['power_saves'].append(
                     result.get('power_save_mode', False))
 
-        # 计算指标
         metrics = {}
         for method in ['emg_only', 'visual_only', 'fusion']:
             if results[method]['preds']:
@@ -2064,7 +2018,6 @@ class MultimodalFusionSystem:
             metrics['fusion']['avg_confidence'] = float(np.mean(results['fusion']['confidences']))
             metrics['fusion']['power_save_rate'] = float(np.mean(results['fusion']['power_saves']))
 
-        # 存储权重用于可视化
         if self.manager.fusion_model:
             metrics['fusion_weights'] = self.manager.fusion_model.base_weights.get_weights_numpy().tolist()
 
@@ -2096,22 +2049,20 @@ class MultimodalFusionSystem:
             for i, label in enumerate(GESTURE_LABELS):
                 r = metrics['fusion']['per_class_recall'][i] \
                     if i < len(metrics['fusion']['per_class_recall']) else 0
-                # 与单模态对比
                 emg_r = metrics.get('emg_only', {}).get('per_class_recall', [0] * 13)
                 vis_r = metrics.get('visual_only', {}).get('per_class_recall', [0] * 13)
                 er = emg_r[i] if i < len(emg_r) else 0
                 vr = vis_r[i] if i < len(vis_r) else 0
 
-                bar = '█' * int(r * 20) + '░' * (20 - int(r * 20))
+                bar = '=' * int(r * 20) + ' ' * (20 - int(r * 20))
                 flag = ""
                 if i in PROBLEM_CLASSES:
-                    flag = " ★PROB"
+                    flag = " PROB"
                 elif i in VISUAL_STRONG_CLASSES:
-                    flag = " ◆VIS"
+                    flag = " VIS"
 
-                # 是否融合提升了
                 best_single = max(er, vr)
-                improvement = "↑" if r > best_single else "↓" if r < best_single else "="
+                improvement = "UP" if r > best_single else "DN" if r < best_single else "EQ"
 
                 print(f"    G{i + 1:2d} {label:<25}: {r * 100:5.1f}% {bar} "
                       f"(E:{er * 100:4.0f}% V:{vr * 100:4.0f}% {improvement}){flag}")
@@ -2134,19 +2085,18 @@ class MultimodalFusionSystem:
 
 def main():
     print("=" * 70)
-    print("SOLID-Net V8.1: Adaptive Confusion-Aware Multimodal Fusion")
+    print("SOLID-Net: Multimodal Fusion System")
     print(f"  SC-MSFE:    Six-Channel Multi-Scale Feature Extraction (EMG)")
     print(f"  CAST-Net:   Contextual Attention Sequential Temporal Network (Visual)")
     print(f"  SOLID-Net:  Stable Online Learning Independent Decision-fusion Network")
-    print(f"  IKUN:       Independent Keystone Unified Nexus (Top-level)")
     print(f"  Output:     {OUTPUT_DIR}")
     print("=" * 70)
 
-    print(f"\n[Key Improvement V8.1]")
-    print(f"  - Adaptive weight init from per-class accuracy (not fixed prior)")
-    print(f"  - Two-phase training: weight discovery + fine-tune")
-    print(f"  - Disagreement resolver for EMG/Visual conflicts")
-    print(f"  - Visual-strong class boost (Ball, Press, Opposition, Interlace)")
+    print(f"\n[Fusion Methods Available]")
+    print(f"  - Adaptive weighted fusion with confusion awareness")
+    print(f"  - Stacking meta-learner")
+    print(f"  - Mixture of Experts (MoE)")
+    print(f"  - Temperature scaling calibration")
 
     device = select_gpu()
     print(f"\n[Device] {device}")
@@ -2154,24 +2104,18 @@ def main():
     config = FusionConfig(device=device)
     system = MultimodalFusionSystem(config)
 
-    # Setup
     system.setup()
     system.verify_emg()
 
-    # Load test data
     test_data = system.data_loader.load_test_data()
 
-    # Train (includes pre-evaluation + weight init + two-phase training)
     system.train(test_data)
 
-    # Evaluate
     metrics = system.evaluate(test_data)
     system.print_results(metrics)
 
-    # Save
     save_dir = system.save_results(metrics)
 
-    # Final summary
     print(f"\n{'=' * 70}")
     print("Complete!")
     print(f"{'=' * 70}")
