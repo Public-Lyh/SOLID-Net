@@ -45,7 +45,7 @@ SOLID-Net/
 Python == 3.11.14
 ```
 
-安装依赖：
+安装依赖（依赖文件暂未写好）：
 
 ```bash
 pip install -r requirements.txt
@@ -86,7 +86,7 @@ data/
 
 ## 6. 模型训练
 
-配置好数据集路径和python环境后在VSCode右键开始运行即可开始训练。
+配置好数据集路径和python环境后在VSCode开始运行即可开始训练。
 
 ## 7.引用
 
