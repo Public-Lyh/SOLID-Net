@@ -46,7 +46,7 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 
-ROOT_PATH = Path("/home/luoyh/deep_learning_project/Dataset")
+ROOT_PATH = Path("/yourpath/Dataset")
 HAND_DETECT_MODEL = ROOT_PATH / "models" / "best.pt"
 VISUAL_MODEL_PATH = ROOT_PATH / "models" / "mvtf_visual.pth"
 EMG_MODEL_DIR = ROOT_PATH / "models" / "EMG"
