@@ -8,7 +8,7 @@
 
 ## 1. 项目简介
 
-SOLID-Net 是一个面向手部康复手势识别任务的深度学习模型。部分核心代码将在论文被接收后开源。
+SOLID-Net 是一个面向手部康复手势识别任务的深度学习模型。
 
 本仓库包含：
 
@@ -101,7 +101,7 @@ data/
 
 ## 1. Introduction
 
-SOLID-Net is a deep learning model designed for hand rehabilitation gesture recognition. Some core code will be open-sourced after the paper is accepted.
+SOLID-Net is a deep learning model designed for hand rehabilitation gesture recognition. 
 
 This repository contains:
 
